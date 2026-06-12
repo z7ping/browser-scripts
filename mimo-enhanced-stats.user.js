@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         MiMo 平台用量增强统计
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      5.0
 // @description  在 xiaomimimo 用量统计页面增加缓存命中率、今日消耗百分比、每日柱状图等指标
 // @author       Hermes
 // @match        https://platform.xiaomimimo.com/console/plan-manage*
-// @grant        none
+// @updateURL    http://192.168.31.239:53000/ai-area/browser-scripts/raw/master/mimo-enhanced-stats.user.js
+// @downloadURL  http://192.168.31.239:53000/ai-area/browser-scripts/raw/master/mimo-enhanced-stats.user.js
+// @grant        GM_xmlhttpRequest
 // @run-at       document-start
 // ==/UserScript==
 
@@ -161,7 +163,7 @@
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
         <span style="font-size:20px;">📊</span>
         <span style="font-size:16px;font-weight:600;color:#fff;">增强用量统计</span>
-        <span style="margin-left:auto;font-size:11px;color:#666;">v4.0 · auto-refresh 60s</span>
+        <span style="margin-left:auto;font-size:11px;color:#666;">v5.0 · auto-refresh 60s</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
         ${metricBox('缓存命中率', pct(m.cacheHitRate), m.cacheHitRate > 0.9 ? '#4ade80' : m.cacheHitRate > 0.7 ? '#facc15' : '#f87171')}
@@ -232,5 +234,5 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] 🚀 v4.0 启动');
+  console.log('[MiMo Stats] 🚀 v5.0 启动');
 })();
