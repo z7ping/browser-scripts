@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MiMo 平台用量增强统计
 // @namespace    http://tampermonkey.net/
-// @version      6.6
+// @version      6.7
 // @description  在 xiaomimimo 用量统计页面增加 Token/Credits 消耗、费用、缓存命中率等指标
 // @author       Hermes
 // @match        https://platform.xiaomimimo.com/console/plan-manage*
@@ -474,14 +474,20 @@
   }
 
   async function doRefresh() {
-    const old = document.getElementById('mimo-enhanced-stats');
-    if (old) old.remove();
     // 先拉最新数据
     await fetchData();
     if (cachedUsage && cachedList) {
       const metrics = computeMetrics(cachedUsage, cachedList);
       window.__mimoMetrics = metrics;
-      inject(metrics);
+      const existing = document.getElementById('mimo-enhanced-stats');
+      if (existing) {
+        // 原地更新：不移除DOM节点，只替换内容，避免触发页面框架重新请求
+        const card = renderCard(metrics);
+        existing.innerHTML = card.innerHTML;
+        existing.style.cssText = card.style.cssText;
+      } else {
+        inject(metrics);
+      }
       setupRefreshControls();
       // 更新刷新时间
       const timeEl = document.getElementById('mimo-refresh-time');
@@ -546,5 +552,5 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] v6.6 启动');
+  console.log('[MiMo Stats] v6.7 启动');
 })();
