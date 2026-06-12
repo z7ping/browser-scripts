@@ -269,6 +269,7 @@
     const t = theme();
     const card = document.createElement('div');
     card.id = 'mimo-enhanced-stats';
+    card.style.cssText = `background:${t.bg};border-radius:12px;padding:20px 24px;margin:16px 0;color:${t.text};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:${t.shadow};${t.border}`;
 
     // 模型明细卡片
     const modelCards = m.models.map((d, i) => {
@@ -363,7 +364,6 @@
             (d, v) => v > 0.95 ? '#4ade80' : v > 0.9 ? '#86efac' : v > 0.8 ? '#facc15' : '#f87171',
             v => pct(v))}
         </div>
-      </div>
       </div>
     `;
     return card;
@@ -468,5 +468,5 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] v6.2 启动');
+  console.log('[MiMo Stats] v6.3 启动');
 })();
