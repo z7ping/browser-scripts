@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MiMo 平台用量增强统计
 // @namespace    http://tampermonkey.net/
-// @version      6.5
+// @version      6.6
 // @description  在 xiaomimimo 用量统计页面增加 Token/Credits 消耗、费用、缓存命中率等指标
 // @author       Hermes
 // @match        https://platform.xiaomimimo.com/console/plan-manage*
@@ -82,22 +82,24 @@
 
   // ============ 真实数据刷新 ============
   const API_BASE = 'https://platform.xiaomimimo.com';
-
-  function getApiPh() {
-    // 从 cookie 中提取 api-platform_ph
-    const match = document.cookie.match(/api-platform_ph=([^;]+)/);
-    return match ? decodeURIComponent(match[1]) : null;
-  }
+  // 捕获页面自身请求的完整URL（含api-platform_ph等参数），用于刷新时复用
+  let capturedUsageUrl = null;
+  let capturedListUrl = null;
 
   async function fetchData() {
-    const ph = getApiPh();
-    if (!ph) { console.warn('[MiMo Stats] 未找到 api-platform_ph'); return; }
+    // 优先用捕获的URL（含页面自带的认证参数）
+    const usageUrl = capturedUsageUrl || (API_BASE + '/api/v1/tokenPlan/usage');
+    const listUrl = capturedListUrl;
+    if (!listUrl) {
+      console.warn('[MiMo Stats] 未捕获到 list 请求URL，等待页面自身请求...');
+      return;
+    }
     const now = new Date();
     const body = JSON.stringify({ year: now.getFullYear(), month: now.getMonth() + 1 });
     try {
       const [usageRes, listRes] = await Promise.all([
-        origFetch(API_BASE + '/api/v1/tokenPlan/usage', { credentials: 'include' }),
-        origFetch(API_BASE + '/api/v1/usage/token-plan/list?api-platform_ph=' + encodeURIComponent(ph), {
+        origFetch(usageUrl, { credentials: 'include' }),
+        origFetch(listUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body,
@@ -119,9 +121,14 @@
     const result = origFetch.apply(this, args);
     const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
     if (url.includes('/api/v1/tokenPlan/usage')) {
+      if (!capturedUsageUrl) capturedUsageUrl = url; // 捕获完整URL
       result.then(r => r.clone().json().then(j => { if (j.code === 0) { cachedUsage = j.data; tryInject(); } })).catch(() => {});
     }
     if (url.includes('/api/v1/usage/token-plan/list')) {
+      if (!capturedListUrl) {
+        capturedListUrl = url; // 捕获完整URL
+        console.log('[MiMo Stats] 捕获 list URL:', url);
+      }
       result.then(r => r.clone().json().then(j => { if (j.code === 0) { cachedList = j.data; tryInject(); } })).catch(() => {});
     }
     return result;
@@ -135,8 +142,14 @@
     this.addEventListener('load', function () {
       try {
         const data = JSON.parse(this.responseText);
-        if (this._mimoUrl?.includes('/api/v1/tokenPlan/usage') && data.code === 0) { cachedUsage = data.data; tryInject(); }
-        if (this._mimoUrl?.includes('/api/v1/usage/token-plan/list') && data.code === 0) { cachedList = data.data; tryInject(); }
+        if (this._mimoUrl?.includes('/api/v1/tokenPlan/usage') && data.code === 0) {
+          if (!capturedUsageUrl) capturedUsageUrl = this._mimoUrl;
+          cachedUsage = data.data; tryInject();
+        }
+        if (this._mimoUrl?.includes('/api/v1/usage/token-plan/list') && data.code === 0) {
+          if (!capturedListUrl) capturedListUrl = this._mimoUrl;
+          cachedList = data.data; tryInject();
+        }
       } catch (e) { }
     });
     return origSend.apply(this, args);
@@ -533,5 +546,5 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] v6.5 启动');
+  console.log('[MiMo Stats] v6.6 启动');
 })();
