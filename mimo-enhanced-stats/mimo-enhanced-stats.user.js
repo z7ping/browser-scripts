@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MiMo 平台用量增强统计
 // @namespace    http://tampermonkey.net/
-// @version      6.3
+// @version      6.4
 // @description  在 xiaomimimo 用量统计页面增加 Token/Credits 消耗、费用、缓存命中率等指标
 // @author       Hermes
 // @match        https://platform.xiaomimimo.com/console/plan-manage*
@@ -314,6 +314,7 @@
         <span style="font-size:16px;font-weight:600;color:${t.titleColor};">增强用量统计</span>
         <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
           <span id="mimo-refresh-interval" style="display:flex;align-items:center;gap:4px;">${intervalBtns}</span>
+          <span id="mimo-refresh-time" style="font-size:10px;color:${t.textFaint};"></span>
           <span id="mimo-refresh-btn" style="cursor:pointer;padding:3px 10px;border-radius:4px;font-size:11px;background:${isDark ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.1)'};color:#818cf8;border:1px solid ${isDark ? 'rgba(99,102,241,0.3)' : 'rgba(99,102,241,0.2)'};">🔄 刷新</span>
           <span id="mimo-theme-btn" style="cursor:pointer;padding:3px 10px;border-radius:4px;font-size:11px;background:${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'};color:${t.textDim};border:1px solid ${t.cardBorder};">${isDark ? '☀️ 亮色' : '🌙 暗色'}</span>
         </div>
@@ -381,6 +382,10 @@
           e.stopPropagation();
           refreshInterval = parseInt(btn.dataset.ms);
           startAutoRefresh();
+          // 视觉反馈：选中按钮闪一下
+          btn.style.transform = 'scale(1.1)';
+          btn.style.transition = 'transform 0.15s';
+          setTimeout(() => { btn.style.transform = ''; }, 150);
           doRefresh();
         });
       });
@@ -388,7 +393,24 @@
     if (refreshBtn) {
       refreshBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        doRefresh();
+        // 视觉反馈：按钮变色
+        refreshBtn.textContent = '⏳ 刷新中...';
+        refreshBtn.style.background = 'rgba(99,102,241,0.4)';
+        setTimeout(() => {
+          doRefresh();
+          // 刷新完恢复
+          const btn = document.getElementById('mimo-refresh-btn');
+          const timeEl = document.getElementById('mimo-refresh-time');
+          if (btn) {
+            btn.textContent = '✅ 已刷新';
+            btn.style.background = 'rgba(34,197,94,0.2)';
+            if (timeEl) timeEl.textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+            setTimeout(() => {
+              btn.textContent = '🔄 刷新';
+              btn.style.background = '';
+            }, 1500);
+          }
+        }, 300);
       });
     }
     if (themeBtn) {
@@ -411,6 +433,9 @@
     if (window.__mimoMetrics) {
       inject(window.__mimoMetrics);
       setupRefreshControls();
+      // 更新刷新时间（自动刷新也显示）
+      const timeEl = document.getElementById('mimo-refresh-time');
+      if (timeEl) timeEl.textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     }
   }
 
@@ -468,5 +493,5 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] v6.3 启动');
+  console.log('[MiMo Stats] v6.4 启动');
 })();
