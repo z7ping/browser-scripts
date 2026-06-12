@@ -2,6 +2,13 @@
 
 在 [Xiaomi MiMo 开放平台](https://platform.xiaomimimo.com/console/plan-manage) 用量统计页面注入增强统计面板，让用量一目了然。
 
+
+![插件暗色模式](./static/1.png)
+
+
+![插件亮色模式](./static/2.png)
+
+
 ## 功能一览
 
 - **核心指标卡片**（暗色/亮色双主题）
@@ -88,7 +95,3 @@ MiMo 平台使用 Credits 计费，不同模型的 Credits 消耗倍率不同：
 
 - 1 元人民币 = 1 亿 Credits
 - V2.5 的倍率最低，同样的额度能用更久
-
-## 分享给朋友
-
-脚本完全通用，无需任何配置。只要朋友安装了 Tampermonkey 并粘贴脚本代码，登录 MiMo 账号后打开订阅管理页面就能自动显示。
