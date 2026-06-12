@@ -1,20 +1,25 @@
 // ==UserScript==
 // @name         MiMo 平台用量增强统计
 // @namespace    http://tampermonkey.net/
-// @version      5.0
-// @description  在 xiaomimimo 用量统计页面增加缓存命中率、今日消耗百分比、每日柱状图等指标
+// @version      6.0
+// @description  在 xiaomimimo 用量统计页面增加 Token/Credits 消耗、费用、缓存命中率等指标
 // @author       Hermes
 // @match        https://platform.xiaomimimo.com/console/plan-manage*
-// @updateURL    http://192.168.31.239:53000/ai-area/browser-scripts/raw/master/mimo-enhanced-stats.user.js
-// @downloadURL  http://192.168.31.239:53000/ai-area/browser-scripts/raw/master/mimo-enhanced-stats.user.js
-// @grant        GM_xmlhttpRequest
+// @grant        none
 // @run-at       document-start
 // ==/UserScript==
 
 (function () {
   'use strict';
 
-  const QUOTA = 11_000_000_000;
+  // ============ Credits 倍率 ============
+  const MODEL_RATES = {
+    'mimo-v2.5':     { hit: 2,   miss: 100, output: 200 },
+    'mimo-v2.5-pro': { hit: 2.5, miss: 300, output: 600 },
+    'mimo-v2-pro':   { hit: 140, miss: 700, output: 2100 },
+    'mimo-v2-omni':  { hit: 56,  miss: 280, output: 1400 },
+  };
+  const CREDITS_PER_YUAN = 100_000_000; // 1元 = 1亿 Credits
 
   function fmt(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
@@ -24,6 +29,12 @@
   }
   function pct(v) { return (v * 100).toFixed(1) + '%'; }
   function pct2(v) { return (v * 100).toFixed(2) + '%'; }
+  function yuan(v) { return '¥' + v.toFixed(2); }
+
+  function calcCredits(model, hit, miss, output) {
+    const r = MODEL_RATES[model] || MODEL_RATES['mimo-v2.5'];
+    return hit * r.hit + miss * r.miss + output * r.output;
+  }
 
   let cachedUsage = null;
   let cachedList = null;
@@ -60,73 +71,152 @@
   // ============ 计算指标 ============
   function computeMetrics(usageData, listData) {
     const m = {};
-    const planItem = usageData?.usage?.items?.find(i => i.name === 'plan_total_token');
-    if (planItem) { m.planUsed = planItem.used; m.planLimit = planItem.limit; }
 
+    // 套餐额度（从 API 获取，单位 Credits）
+    const planItem = usageData?.usage?.items?.find(i => i.name === 'plan_total_token');
+    const monthItem = usageData?.monthUsage?.items?.[0];
+    m.planLimit = planItem?.limit || monthItem?.limit || 0;
+    m.planUsed = monthItem?.used || 0;
+    m.planRemaining = m.planLimit - m.planUsed;
+
+    // 按模型分组
+    const modelMap = {};
+    for (const d of listData) {
+      if (!modelMap[d.model]) modelMap[d.model] = { hit: 0, miss: 0, output: 0, total: 0, reqs: 0 };
+      const m2 = modelMap[d.model];
+      m2.hit += d.inputHitToken;
+      m2.miss += d.inputMissToken;
+      m2.output += d.outputToken;
+      m2.total += d.totalToken;
+      m2.reqs += d.requestCount;
+    }
+
+    // 按总消耗排序
+    m.models = Object.entries(modelMap)
+      .map(([name, data]) => ({
+        name,
+        ...data,
+        credits: calcCredits(name, data.hit, data.miss, data.output),
+        hitRate: (data.hit + data.miss) > 0 ? data.hit / (data.hit + data.miss) : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+
+    // 今日数据
     const today = new Date().toISOString().slice(0, 10);
     const todayItems = listData.filter(d => d.date === today);
     m.todayTotal = todayItems.reduce((s, d) => s + d.totalToken, 0);
     m.todayHit = todayItems.reduce((s, d) => s + d.inputHitToken, 0);
     m.todayMiss = todayItems.reduce((s, d) => s + d.inputMissToken, 0);
+    m.todayOutput = todayItems.reduce((s, d) => s + d.outputToken, 0);
     m.todayReqs = todayItems.reduce((s, d) => s + d.requestCount, 0);
-    m.todayPercent = m.todayTotal / QUOTA;
-    m.cacheHitRate = (m.todayHit + m.todayMiss) > 0 ? m.todayHit / (m.todayHit + m.todayMiss) : 0;
-    m.avgTokensPerReq = m.todayReqs > 0 ? m.todayTotal / m.todayReqs : 0;
+    m.todayCredits = todayItems.reduce((s, d) => s + calcCredits(d.model, d.inputHitToken, d.inputMissToken, d.outputToken), 0);
+    m.todayHitRate = (m.todayHit + m.todayMiss) > 0 ? m.todayHit / (m.todayHit + m.todayMiss) : 0;
+    m.todayYuan = m.todayCredits / CREDITS_PER_YUAN;
 
-    const monthUsage = usageData?.monthUsage;
-    if (monthUsage) {
-      const currentDay = new Date().getUTCDate();
-      m.monthUsed = monthUsage.items?.[0]?.used || 0;
-      m.monthDailyAvg = m.monthUsed / Math.max(currentDay, 1);
-      m.monthRemaining = QUOTA - m.monthUsed;
-      m.daysUntilExhaust = m.monthDailyAvg > 0 ? Math.floor(m.monthRemaining / m.monthDailyAvg) : 999;
-    }
+    // 本月汇总
+    m.monthCredits = m.models.reduce((s, d) => s + d.credits, 0);
+    m.monthYuan = m.monthCredits / CREDITS_PER_YUAN;
+    m.monthRemainingYuan = m.planRemaining / CREDITS_PER_YUAN;
 
-    const last7 = listData.slice(0, 7);
-    m.weekTotal = last7.reduce((s, d) => s + d.totalToken, 0);
-    m.weekReqs = last7.reduce((s, d) => s + d.requestCount, 0);
-
-    // 每日聚合
+    // 按日聚合（用于柱状图）
     const dailyMap = {};
     for (const d of listData) {
-      if (!dailyMap[d.date]) dailyMap[d.date] = { date: d.date, totalToken: 0, hit: 0, miss: 0, reqs: 0 };
-      const day = dailyMap[d.date];
-      day.totalToken += d.totalToken;
-      day.hit += d.inputHitToken;
-      day.miss += d.inputMissToken;
-      day.reqs += d.requestCount;
+      if (!dailyMap[d.date]) dailyMap[d.date] = {};
+      const dm = dailyMap[d.date];
+      if (!dm[d.model]) dm[d.model] = { hit: 0, miss: 0, output: 0, total: 0, reqs: 0 };
+      dm[d.model].hit += d.inputHitToken;
+      dm[d.model].miss += d.inputMissToken;
+      dm[d.model].output += d.outputToken;
+      dm[d.model].total += d.totalToken;
+      dm[d.model].reqs += d.requestCount;
     }
-    m.daily = Object.values(dailyMap)
-      .sort((a, b) => a.date.localeCompare(b.date)) // 正序用于柱状图
-      .map(d => ({
-        ...d,
-        tokenPct: d.totalToken / QUOTA,
-        cacheHitRate: (d.hit + d.miss) > 0 ? d.hit / (d.hit + d.miss) : 0,
-      }));
+
+    m.daily = Object.entries(dailyMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, models]) => {
+        const dayTotal = Object.values(models).reduce((s, v) => s + v.total, 0);
+        const dayCredits = Object.entries(models).reduce((s, [name, v]) => s + calcCredits(name, v.hit, v.miss, v.output), 0);
+        const dayHit = Object.values(models).reduce((s, v) => s + v.hit, 0);
+        const dayMiss = Object.values(models).reduce((s, v) => s + v.miss, 0);
+        return {
+          date,
+          models,
+          total: dayTotal,
+          credits: dayCredits,
+          yuan: dayCredits / CREDITS_PER_YUAN,
+          hitRate: (dayHit + dayMiss) > 0 ? dayHit / (dayHit + dayMiss) : 0,
+        };
+      });
+
+    // 预计可用天数
+    const currentDay = new Date().getUTCDate();
+    const avgDailyCredits = m.monthCredits / Math.max(currentDay, 1);
+    m.daysUntilExhaust = avgDailyCredits > 0 ? Math.floor(m.planRemaining / avgDailyCredits) : 999;
 
     return m;
   }
 
   // ============ 渲染 ============
-  function metricBox(label, value, color) {
+  function metricBox(label, value, color, sub) {
     return `<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:12px;text-align:center;border:1px solid rgba(255,255,255,0.06);">
       <div style="font-size:11px;color:#888;margin-bottom:6px;">${label}</div>
       <div style="font-size:18px;font-weight:700;color:${color};">${value}</div>
+      ${sub ? `<div style="font-size:11px;color:#666;margin-top:4px;">${sub}</div>` : ''}
     </div>`;
   }
 
-  function barChart(daily, key, label, unit, colorFn) {
+  const MODEL_COLORS = ['#6366f1','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899'];
+
+  function stackedBarChart(daily, label) {
+    if (!daily || daily.length === 0) return '';
+    const modelNames = [...new Set(daily.flatMap(d => Object.keys(d.models)))];
+    const maxVal = Math.max(...daily.map(d => d.total));
+    if (maxVal === 0) return '';
+
+    const MAX_BAR_H = 110;
+    const bars = daily.map(d => {
+      const colorMap = {};
+      modelNames.forEach((n, i) => { colorMap[n] = MODEL_COLORS[i % MODEL_COLORS.length]; });
+      let segs = '';
+      let h = 0;
+      for (const name of modelNames) {
+        const v = d.models[name]?.total || 0;
+        const segH = maxVal > 0 ? (v / maxVal) * MAX_BAR_H : 0;
+        if (segH > 0) {
+          segs = `<div style="width:100%;max-width:48px;height:${Math.round(segH)}px;background:${colorMap[name]};"></div>` + segs;
+          h += segH;
+        }
+      }
+      const dateShort = d.date.slice(5);
+      return `<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;">
+        <div style="font-size:10px;color:#aaa;margin-bottom:4px;white-space:nowrap;">${fmt(d.total)}</div>
+        <div style="display:flex;flex-direction:column-reverse;width:100%;max-width:48px;">${segs}</div>
+        <div style="font-size:10px;color:#666;margin-top:4px;white-space:nowrap;">${dateShort}</div>
+      </div>`;
+    }).join('');
+
+    const legend = modelNames.map((n, i) => `<span style="display:flex;align-items:center;gap:4px;font-size:10px;color:#888;"><span style="width:8px;height:8px;border-radius:2px;background:${MODEL_COLORS[i % MODEL_COLORS.length]};display:inline-block;"></span>${n}</span>`).join('');
+
+    return `
+      <div style="margin-top:16px;">
+        <div style="font-size:13px;font-weight:600;color:#ccc;margin-bottom:6px;">${label}</div>
+        <div style="display:flex;gap:12px;margin-bottom:8px;">${legend}</div>
+        <div style="display:flex;align-items:flex-end;gap:6px;height:150px;padding:0 4px;">${bars}</div>
+      </div>`;
+  }
+
+  function simpleBarChart(daily, key, label, colorFn) {
     if (!daily || daily.length === 0) return '';
     const maxVal = Math.max(...daily.map(d => d[key]));
     if (maxVal === 0) return '';
 
-    const MAX_BAR_H = 110; // 最大柱高 px
+    const MAX_BAR_H = 110;
     const bars = daily.map(d => {
       const val = d[key];
       const h = maxVal > 0 ? (val / maxVal) * MAX_BAR_H : 0;
       const color = colorFn(d, val);
-      const display = key === 'tokenPct' ? pct2(val) : key === 'cacheHitRate' ? pct(val) : fmt(val);
-      const dateShort = d.date.slice(5); // MM-DD
+      const display = key === 'hitRate' ? pct(val) : key === 'yuan' ? '¥' + val.toFixed(2) : fmt(val);
+      const dateShort = d.date.slice(5);
       return `<div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;">
         <div style="font-size:10px;color:#aaa;margin-bottom:4px;white-space:nowrap;">${display}</div>
         <div style="width:100%;max-width:48px;height:${Math.round(Math.max(h, 3))}px;background:${color};border-radius:4px 4px 0 0;"></div>
@@ -137,9 +227,7 @@
     return `
       <div style="margin-top:16px;">
         <div style="font-size:13px;font-weight:600;color:#ccc;margin-bottom:10px;">${label}</div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:150px;padding:0 4px;">
-          ${bars}
-        </div>
+        <div style="display:flex;align-items:flex-end;gap:6px;height:150px;padding:0 4px;">${bars}</div>
       </div>`;
   }
 
@@ -153,51 +241,73 @@
       box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08);
     `;
 
-    // 图例
-    const legend = `<div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:#888;">
-      <span>🟦 柱高 = 相对值（最高那天 = 100%）</span>
-      <span>顶部数字 = 实际值</span>
-    </div>`;
+    // 模型明细卡片
+    const modelCards = m.models.map((d, i) => {
+      const color = MODEL_COLORS[i % MODEL_COLORS.length];
+      const creditsText = fmt(d.credits) + ' Credits';
+      const totalPct = m.planLimit > 0 ? (d.credits / m.planLimit * 100).toFixed(1) + '%' : '0%';
+      return `
+        <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:12px;border:1px solid rgba(255,255,255,0.06);">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${color};"></span>
+            <span style="font-size:13px;font-weight:600;color:#fff;">${d.name}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;">
+            <div><span style="color:#888;">输入命中：</span><span style="color:#4ade80;">${fmt(d.hit)}</span></div>
+            <div><span style="color:#888;">输入未命中：</span><span style="color:#f87171;">${fmt(d.miss)}</span></div>
+            <div><span style="color:#888;">输出：</span><span style="color:#60a5fa;">${fmt(d.output)}</span></div>
+            <div><span style="color:#888;">缓存命中率：</span><span style="color:${d.hitRate > 0.9 ? '#4ade80' : '#facc15'};">${pct(d.hitRate)}</span></div>
+            <div><span style="color:#888;">Token 合计：</span><span style="color:#fff;">${fmt(d.total)}</span></div>
+            <div><span style="color:#888;">费用：</span><span style="color:#fbbf24;">${yuan(d.credits / CREDITS_PER_YUAN)}</span></div>
+          </div>
+          <div style="margin-top:8px;background:rgba(255,255,255,0.05);border-radius:4px;height:4px;overflow:hidden;">
+            <div style="width:${totalPct};height:100%;background:${color};border-radius:4px;"></div>
+          </div>
+          <div style="font-size:10px;color:#666;margin-top:4px;">占比 ${totalPct}</div>
+        </div>`;
+    }).join('');
 
     card.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
         <span style="font-size:20px;">📊</span>
         <span style="font-size:16px;font-weight:600;color:#fff;">增强用量统计</span>
-        <span style="margin-left:auto;font-size:11px;color:#666;">v5.0 · auto-refresh 60s</span>
+        <span style="margin-left:auto;font-size:11px;color:#666;">v6.0 · auto-refresh 60s</span>
       </div>
+
+      <!-- 核心指标 -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-        ${metricBox('缓存命中率', pct(m.cacheHitRate), m.cacheHitRate > 0.9 ? '#4ade80' : m.cacheHitRate > 0.7 ? '#facc15' : '#f87171')}
-        ${metricBox('今日消耗占比', pct(m.todayPercent), m.todayPercent > 0.1 ? '#f87171' : '#60a5fa')}
-        ${metricBox('今日 Token', fmt(m.todayTotal), '#c084fc')}
+        ${metricBox('今日 Token', fmt(m.todayTotal), '#c084fc', fmt(m.todayHit) + ' 命中 / ' + fmt(m.todayMiss) + ' 未命中')}
+        ${metricBox('今日缓存命中率', pct(m.todayHitRate), m.todayHitRate > 0.9 ? '#4ade80' : '#facc15')}
+        ${metricBox('今日费用', yuan(m.todayYuan), '#fbbf24')}
         ${metricBox('今日请求', fmt(m.todayReqs), '#fb923c')}
       </div>
+
+      <!-- 本月汇总 -->
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-        ${metricBox('平均每次请求', fmt(Math.round(m.avgTokensPerReq)), '#94a3b8')}
-        ${metricBox('本月日均消耗', fmt(Math.round(m.monthDailyAvg || 0)), '#a78bfa')}
-        ${metricBox('剩余可用', fmt(m.monthRemaining || 0), (m.monthRemaining || 0) < QUOTA * 0.2 ? '#f87171' : '#4ade80')}
+        ${metricBox('本月 Token', fmt(m.models.reduce((s, d) => s + d.total, 0)), '#a78bfa')}
+        ${metricBox('本月费用', yuan(m.monthYuan), '#fbbf24')}
+        ${metricBox('剩余可用', yuan(m.monthRemainingYuan), m.monthRemainingYuan < 10 ? '#f87171' : '#4ade80')}
         ${metricBox('预计可用天数', m.daysUntilExhaust + ' 天', (m.daysUntilExhaust || 999) < 3 ? '#f87171' : '#60a5fa')}
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:4px;">
-        ${metricBox('缓存命中 Token', fmt(m.todayHit), '#4ade80')}
-        ${metricBox('缓存未命中 Token', fmt(m.todayMiss), '#f87171')}
-        ${metricBox('本周累计 Token', fmt(m.weekTotal), '#67e8f9')}
-        ${metricBox('本周累计请求', fmt(m.weekReqs), '#fbbf24')}
+
+      <!-- 模型明细 -->
+      <div style="font-size:13px;font-weight:600;color:#ccc;margin-bottom:10px;">📦 模型消耗明细</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:16px;">
+        ${modelCards}
       </div>
+
+      <!-- 柱状图 -->
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:16px;">
         <div>
-          ${barChart(m.daily, 'totalToken', '📈 每日 Token 消耗', 'M',
-            (d, v) => d.date === new Date().toISOString().slice(0,10) ? '#818cf8' : '#6366f1')}
-          <div style="font-size:10px;color:#555;margin-top:4px;text-align:center;">柱高 = 相对消耗量，顶部 = 实际值</div>
+          ${stackedBarChart(m.daily, '📈 每日 Token 消耗（按模型）')}
         </div>
         <div>
-          ${barChart(m.daily, 'tokenPct', '📊 每日消耗占比', '%',
-            (d, v) => v > 0.1 ? '#f87171' : v > 0.05 ? '#facc15' : '#60a5fa')}
-          <div style="font-size:10px;color:#555;margin-top:4px;text-align:center;">红色 = >10% 套餐，黄色 = >5%，蓝色 = 正常</div>
+          ${simpleBarChart(m.daily, 'yuan', '💰 每日费用',
+            (d, v) => d.date === new Date().toISOString().slice(0,10) ? '#fbbf24' : '#d97706')}
         </div>
         <div>
-          ${barChart(m.daily, 'cacheHitRate', '🎯 每日缓存命中率', '%',
+          ${simpleBarChart(m.daily, 'hitRate', '🎯 每日缓存命中率',
             (d, v) => v > 0.95 ? '#4ade80' : v > 0.9 ? '#86efac' : v > 0.8 ? '#facc15' : '#f87171')}
-          <div style="font-size:10px;color:#555;margin-top:4px;text-align:center;">绿色 = 高命中，黄色 = 一般，红色 = 低</div>
         </div>
       </div>
     `;
@@ -206,18 +316,37 @@
 
   // ============ 注入 ============
   function findInsertTarget() {
-    const all = document.querySelectorAll('*');
-    for (const el of all) {
-      if (el.children.length === 0 && el.textContent.trim() === '使用详情') return el;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      if (walker.currentNode.textContent.trim() === '使用详情') {
+        return walker.currentNode.parentElement;
+      }
     }
+    for (const el of document.querySelectorAll('*')) {
+      if (el.textContent?.trim()?.startsWith('使用详情') && el.children.length === 0) {
+        return el.closest('[class*="card"], [class*="panel"], [class*="section"], [class*="tab"]') || el.parentElement;
+      }
+    }
+    const main = document.querySelector('main, [class*="content"], [class*="main"]');
+    if (main) return main;
+    const firstDiv = document.querySelector('body > div');
+    if (firstDiv) return firstDiv;
     return null;
   }
 
   function inject(metrics) {
-    if (document.getElementById('mimo-enhanced-stats')) return;
+    if (document.getElementById('mimo-enhanced-stats')) return true;
     const target = findInsertTarget();
-    if (!target) return false;
-    target.parentNode.insertBefore(renderCard(metrics), target);
+    if (target) {
+      const card = renderCard(metrics);
+      if (target.parentElement) {
+        target.parentElement.insertBefore(card, target);
+      } else {
+        target.prepend(card);
+      }
+      return true;
+    }
+    document.body.prepend(renderCard(metrics));
     return true;
   }
 
@@ -234,5 +363,12 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] 🚀 v5.0 启动');
+  setInterval(() => {
+    if (document.getElementById('mimo-enhanced-stats')) {
+      document.getElementById('mimo-enhanced-stats').remove();
+      if (window.__mimoMetrics) inject(window.__mimoMetrics);
+    }
+  }, 60000);
+
+  console.log('[MiMo Stats] v6.0 启动');
 })();
