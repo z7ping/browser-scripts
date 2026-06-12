@@ -265,7 +265,6 @@
     const t = theme();
     const card = document.createElement('div');
     card.id = 'mimo-enhanced-stats';
-    card.style.cssText = `background:${t.bg};border-radius:12px;padding:20px 24px;margin:16px 0;color:${t.text};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:${t.shadow};${t.border}`;
 
     // 模型明细卡片
     const modelCards = m.models.map((d, i) => {
