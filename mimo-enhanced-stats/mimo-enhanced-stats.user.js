@@ -226,11 +226,12 @@
 
     const legend = modelNames.map((n, i) => `<span style="display:flex;align-items:center;gap:4px;font-size:10px;color:${t.textDim};"><span style="width:8px;height:8px;border-radius:2px;background:${MODEL_COLORS[i % MODEL_COLORS.length]};display:inline-block;"></span>${n}</span>`).join('');
 
+    const minW = daily.length * 52;
     return `
       <div style="margin-top:16px;">
         <div style="font-size:14px;font-weight:600;color:${t.text};margin-bottom:6px;">${label}</div>
         <div style="display:flex;gap:12px;margin-bottom:8px;">${legend}</div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:150px;padding:0 4px;">${bars}</div>
+        <div style="display:flex;align-items:flex-end;gap:6px;height:150px;padding:0 4px;min-width:${minW}px;">${bars}</div>
       </div>`;
   }
 
@@ -254,10 +255,13 @@
       </div>`;
     }).join('');
 
+    const minW = daily.length * 52;
     return `
       <div style="margin-top:16px;">
-        <div style="font-size:14px;font-weight:600;color:${t.text};margin-bottom:10px;">${label}</div>
-        <div style="display:flex;align-items:flex-end;gap:6px;height:150px;padding:0 4px;">${bars}</div>
+        <div style="font-size:13px;font-weight:600;color:${t.textDim};margin-bottom:10px;">${label}</div>
+        <div style="display:flex;align-items:flex-end;gap:4px;height:160px;padding:0 4px;min-width:${minW}px;">
+          ${bars}
+        </div>
       </div>`;
   }
 
@@ -339,24 +343,27 @@
 
       <!-- 柱状图 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;">
-        <div>
+        <div style="overflow-x:auto;">
           ${stackedBarChart(m.daily, '📈 每日 Token 消耗（按模型）')}
         </div>
-        <div>
+        <div style="overflow-x:auto;">
           ${simpleBarChart(m.daily, 'percent', '📊 每日占套餐',
             (d, v) => v > 0.1 ? '#f87171' : v > 0.05 ? '#facc15' : '#60a5fa',
             v => pct2(v))}
         </div>
-        <div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;">
+        <div style="overflow-x:auto;">
           ${simpleBarChart(m.daily, 'yuan', '💰 每日费用',
             (d, v) => d.date === new Date().toISOString().slice(0,10) ? '#fbbf24' : '#d97706',
             v => '¥' + v.toFixed(2))}
         </div>
+        <div style="overflow-x:auto;">
+          ${simpleBarChart(m.daily, 'hitRate', '🎯 每日缓存命中率',
+            (d, v) => v > 0.95 ? '#4ade80' : v > 0.9 ? '#86efac' : v > 0.8 ? '#facc15' : '#f87171',
+            v => pct(v))}
+        </div>
       </div>
-      <div style="margin-top:16px;">
-        ${simpleBarChart(m.daily, 'hitRate', '🎯 每日缓存命中率',
-          (d, v) => v > 0.95 ? '#4ade80' : v > 0.9 ? '#86efac' : v > 0.8 ? '#facc15' : '#f87171',
-          v => pct(v))}
       </div>
     `;
     return card;
