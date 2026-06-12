@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MiMo 平台用量增强统计
 // @namespace    http://tampermonkey.net/
-// @version      6.4
+// @version      6.5
 // @description  在 xiaomimimo 用量统计页面增加 Token/Credits 消耗、费用、缓存命中率等指标
 // @author       Hermes
 // @match        https://platform.xiaomimimo.com/console/plan-manage*
@@ -79,6 +79,23 @@
   let cachedList = null;
   let refreshInterval = 300000; // 5分钟
   let refreshTimer = null;
+
+  // ============ 真实数据刷新 ============
+  const API_BASE = 'https://platform.xiaomimimo.com';
+  async function fetchData() {
+    try {
+      const [usageRes, listRes] = await Promise.all([
+        origFetch(API_BASE + '/api/v1/tokenPlan/usage', { credentials: 'include' }),
+        origFetch(API_BASE + '/api/v1/usage/token-plan/list', { credentials: 'include' }),
+      ]);
+      const usageJson = await usageRes.json();
+      const listJson = await listRes.json();
+      if (usageJson.code === 0) cachedUsage = usageJson.data;
+      if (listJson.code === 0) cachedList = listJson.data;
+    } catch (e) {
+      console.warn('[MiMo Stats] fetchData error:', e);
+    }
+  }
 
   // ============ 拦截 fetch ============
   const origFetch = window.fetch;
@@ -427,13 +444,17 @@
     refreshTimer = setInterval(() => doRefresh(), refreshInterval);
   }
 
-  function doRefresh() {
+  async function doRefresh() {
     const old = document.getElementById('mimo-enhanced-stats');
     if (old) old.remove();
-    if (window.__mimoMetrics) {
-      inject(window.__mimoMetrics);
+    // 先拉最新数据
+    await fetchData();
+    if (cachedUsage && cachedList) {
+      const metrics = computeMetrics(cachedUsage, cachedList);
+      window.__mimoMetrics = metrics;
+      inject(metrics);
       setupRefreshControls();
-      // 更新刷新时间（自动刷新也显示）
+      // 更新刷新时间
       const timeEl = document.getElementById('mimo-refresh-time');
       if (timeEl) timeEl.textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     }
@@ -482,6 +503,9 @@
     inject(metrics);
     setupRefreshControls();
     startAutoRefresh();
+    // 首次显示刷新时间
+    const timeEl = document.getElementById('mimo-refresh-time');
+    if (timeEl) timeEl.textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }
 
   const observer = new MutationObserver(() => {
@@ -493,5 +517,5 @@
   if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   else document.addEventListener('DOMContentLoaded', () => observer.observe(document.body, { childList: true, subtree: true }));
 
-  console.log('[MiMo Stats] v6.4 启动');
+  console.log('[MiMo Stats] v6.5 启动');
 })();
