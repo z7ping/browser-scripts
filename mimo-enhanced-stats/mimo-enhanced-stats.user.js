@@ -82,11 +82,27 @@
 
   // ============ 真实数据刷新 ============
   const API_BASE = 'https://platform.xiaomimimo.com';
+
+  function getApiPh() {
+    // 从 cookie 中提取 api-platform_ph
+    const match = document.cookie.match(/api-platform_ph=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
   async function fetchData() {
+    const ph = getApiPh();
+    if (!ph) { console.warn('[MiMo Stats] 未找到 api-platform_ph'); return; }
+    const now = new Date();
+    const body = JSON.stringify({ year: now.getFullYear(), month: now.getMonth() + 1 });
     try {
       const [usageRes, listRes] = await Promise.all([
         origFetch(API_BASE + '/api/v1/tokenPlan/usage', { credentials: 'include' }),
-        origFetch(API_BASE + '/api/v1/usage/token-plan/list', { credentials: 'include' }),
+        origFetch(API_BASE + '/api/v1/usage/token-plan/list?api-platform_ph=' + encodeURIComponent(ph), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          credentials: 'include',
+        }),
       ]);
       const usageJson = await usageRes.json();
       const listJson = await listRes.json();
